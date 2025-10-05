@@ -28,3 +28,6 @@ def compare_layers():
 @app.route('/exportCSV', methods=['GET'])
 def export_csv():
     return 0
+
+if __name__ == '__main__':
+    app.run(debug=True)
