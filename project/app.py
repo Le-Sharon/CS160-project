@@ -14,6 +14,12 @@ def import_csv():
 
 @app.route('/getLayer', methods=['GET'])
 def get_layer():
+    """
+    Fetch data from API
+    There's types of layers to get: 
+    airquality, weather, gbfs (get bike/scooters stations), route
+    For route, support walking, driving and cycling modes
+    """
     return 0
 
 @app.route('/getBuffer', methods=['POST'])
