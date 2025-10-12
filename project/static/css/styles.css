@@ -1,0 +1,3 @@
+html, body { height: 100%; }
+#map, #csvMap, #compareMap { height: 70vh; width: 100%; border-radius: 12px; }
+.leaflet-container { border: 1px solid #ffffff; }

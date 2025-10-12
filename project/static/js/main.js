@@ -17,3 +17,12 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 }).addTo(compareMap);
+
+// Fix Leaflet map visibility on tab switch
+document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(tab => {
+  tab.addEventListener('shown.bs.tab', function (event) {
+    if (map) map.invalidateSize();
+    if (csvMap) csvMap.invalidateSize();
+    if (compareMap) compareMap.invalidateSize();
+  });
+});
