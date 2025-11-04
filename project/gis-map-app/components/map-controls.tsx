@@ -1,9 +1,9 @@
 "use client"
-
+// TODO: Reimplement CSV import/export API (importCSVFile, exportLayerUrl, getLayerGeoJSON).
+// implement API under `lib/api.ts` and server routes for storage/conversion.
 import { useState } from "react"
 import { Upload, Download, MapPin } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { importCSVFile, exportLayerUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Search } from "lucide-react"
 
@@ -23,31 +23,6 @@ const quickLocations = [
 
 export function MapControls({ onFlyTo, mapLoaded, onPlotGeoJson, onClearGeoJson }: MapControlsProps) {
   const [showLocations, setShowLocations] = useState(false)
-  const fileRef = typeof document !== 'undefined' ? (null as unknown as HTMLInputElement | null) : null
-
-  const onImportClick = () => {
-    const el = document.getElementById("csv-import-input") as HTMLInputElement | null
-    el?.click()
-  }
-
-  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    try {
-      const f = e.target.files && e.target.files[0]
-      if (!f) return
-      const resp = await importCSVFile(f)
-      // basic success notification
-      alert(`Imported layer ${resp.layer} (${resp.rows} rows)`)
-    } catch (err: any) {
-      console.error(err)
-      alert(`Import failed: ${err?.message ?? err}`)
-    }
-  }
-
-  const onExportClick = () => {
-    // fallback: export the first layer name if known; otherwise open export dialog to pick
-    const url = exportLayerUrl("app.demo")
-    window.open(url, "_blank")
-  }
 
   return (
   <div className="absolute bottom-6 left-6 z-[9999] pointer-events-auto flex flex-col gap-2">
@@ -56,19 +31,15 @@ export function MapControls({ onFlyTo, mapLoaded, onPlotGeoJson, onClearGeoJson 
         <Button
           size="sm"
           disabled={!mapLoaded}
-          onClick={onImportClick}
           className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
         >
           <Upload className="w-4 h-4" />
           <span className="text-sm">Import CSV</span>
         </Button>
 
-        <input id="csv-import-input" type="file" accept=".csv" style={{ display: "none" }} onChange={onFileSelected} />
-
         <Button
           size="sm"
           disabled={!mapLoaded}
-          onClick={onExportClick}
           className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
         >
           <Download className="w-4 h-4" />

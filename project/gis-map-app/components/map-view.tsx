@@ -1,10 +1,10 @@
 "use client"
-
+// TODO: Reimplement CSV import/export API (importCSVFile, exportLayerUrl, getLayerGeoJSON).
+// implement API under `lib/api.ts` and server routes for storage/conversion.
 import { useState, useCallback } from "react"
 import dynamic from "next/dynamic"
 import { MapControls } from "./map-controls"
 import { LayerPanel } from "./layer-panel"
-import { getLayerGeoJSON } from "@/lib/api"
 import { MapHeader } from "./map-header"
 
 const MapContainer = dynamic(() => import("./leaflet-map"), {
@@ -25,16 +25,6 @@ export default function MapView() {
 
   const handleLayerToggle = (layerId: string) => {
     setActiveLayers((prev) => (prev.includes(layerId) ? prev.filter((id) => id !== layerId) : [...prev, layerId]))
-  }
-
-  const handleLayerFetch = async (layerId: string) => {
-    try {
-      const fc = await getLayerGeoJSON(layerId)
-      setGeoJson(fc)
-    } catch (err) {
-      console.error("Failed to fetch layer:", err)
-      alert(`Failed to fetch layer ${layerId}: ${err}`)
-    }
   }
 
   const handleFlyTo = (lng: number, lat: number, zoom = 12) => {
@@ -78,7 +68,7 @@ export default function MapView() {
       />
 
       {/* Layer Panel */}
-  <LayerPanel activeLayers={activeLayers} onLayerToggle={handleLayerToggle} mapLoaded={mapLoaded} onLayerFetch={handleLayerFetch} />
+      <LayerPanel activeLayers={activeLayers} onLayerToggle={handleLayerToggle} mapLoaded={mapLoaded} />
 
       {/* Map Controls */}
   <MapControls onFlyTo={handleFlyTo} mapLoaded={mapLoaded} onPlotGeoJson={handlePlotGeoJson} onClearGeoJson={handleClearGeoJson} />
