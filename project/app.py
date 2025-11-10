@@ -3,6 +3,7 @@ import io, os, csv, math
 import pandas as pd
 
 app = Flask(__name__)
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
 
 LAYERS: dict[str, pd.DataFrame] = {}
 
@@ -16,6 +17,39 @@ def ok(data, status=200):
 
 def err(msg, status=400):
     return ok({"error": msg}, status)
+
+
+def _allowed_origin(origin: str | None) -> str:
+    if FRONTEND_ORIGIN == "*":
+        return origin or "*"
+    if not origin:
+        return FRONTEND_ORIGIN
+    allowed = {o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()}
+    if not allowed:
+        return FRONTEND_ORIGIN
+    return origin if origin in allowed else next(iter(allowed))
+
+
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        return resp
+
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get("Origin")
+    allow_origin = _allowed_origin(origin)
+    response.headers["Access-Control-Allow-Origin"] = allow_origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    requested_headers = request.headers.get("Access-Control-Request-Headers")
+    response.headers["Access-Control-Allow-Headers"] = requested_headers or "Content-Type"
+    # Let proxies know response varies by Origin header.
+    vary = response.headers.get("Vary")
+    response.headers["Vary"] = "Origin" if not vary else f"{vary}, Origin"
+    return response
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns={c: c.strip().lower() for c in df.columns})
@@ -89,7 +123,22 @@ def circle_polygon(lon: float, lat: float, radius_m: float, steps: int = 64) -> 
 def index():
     return render_template("index.html")
 
-@app.route("/importCSV", methods=["POST"])
+
+@app.route("/layers", methods=["GET"])
+def list_layers():
+    items = []
+    for name, df in LAYERS.items():
+        items.append({
+            "id": name,
+            "name": name,
+            "rows": int(len(df)),
+            "columns": list(df.columns),
+        })
+    items.sort(key=lambda item: item["name"].lower())
+    return ok({"layers": items})
+
+
+@app.route("/importCSV", methods=["POST", "OPTIONS"])
 def import_csv():
     """
     Multipart form:
@@ -149,7 +198,7 @@ def get_layer():
 
     return ok(df_to_geojson(df, limit))
 
-@app.route("/getBuffer", methods=["POST"])
+@app.route("/getBuffer", methods=["POST", "OPTIONS"])
 def get_buffer():
     try:
         body = request.get_json(force=True)
@@ -171,7 +220,7 @@ def get_buffer():
     except Exception as e:
         return err(f"Bad request: {e}")
 
-@app.route("/compareLayers", methods=["POST"])
+@app.route("/compareLayers", methods=["POST", "OPTIONS"])
 def compare_layers():
     try:
         body = request.get_json(force=True)
