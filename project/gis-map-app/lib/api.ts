@@ -1,6 +1,21 @@
 const DEFAULT_API_BASE = "http://localhost:5000"
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, "")
+function resolveApiBase(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL
+  if (fromEnv && fromEnv.trim().length > 0) {
+    return fromEnv.replace(/\/$/, "")
+  }
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location
+    const defaultPort = protocol === "https:" ? 443 : 5000
+    return `${protocol}//${hostname}:${defaultPort}`
+  }
+
+  return DEFAULT_API_BASE
+}
+
+const API_BASE_URL = resolveApiBase()
 
 async function handleResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("Content-Type") || ""
