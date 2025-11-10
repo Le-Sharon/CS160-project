@@ -88,12 +88,67 @@ export default function LeafletMap({ onMapReady, onMove, geoJson, fitToBounds = 
     if (typeof window === "undefined" || !window.L) return
     const L = window.L
 
+    const createTooltipContent = (feature: any) => {
+      const props = feature?.properties ?? {}
+      const entries = Object.entries(props).filter(
+        ([key, value]) => !key.startsWith("_") && value !== null && value !== undefined && value !== "",
+      )
+      if (!entries.length) {
+        return "<div class='neon-tooltip__body'>No properties</div>"
+      }
+      const rows = entries
+        .map(([key, value]) => {
+          const label = key.replace(/[_-]/g, " ")
+          return `<div class="neon-tooltip__row"><span class="neon-tooltip__key">${label}</span><span class="neon-tooltip__value">${value}</span></div>`
+        })
+        .join("")
+      return `<div class='neon-tooltip__body'>${rows}</div>`
+    }
+
+    const getFeatureColor = (feature: any) => {
+      const color = feature?.properties?._layerColor
+      return typeof color === "string" && color.length ? color : "#4CC9F0"
+    }
+
     try {
       const layer = L.geoJSON(geoJson, {
+        pointToLayer: (feature: any, latlng: any) => {
+          const color = getFeatureColor(feature)
+          const marker = L.circleMarker(latlng, {
+            radius: 10,
+            color,
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.85,
+            className: "neon-marker",
+          })
+          marker.bindTooltip(createTooltipContent(feature), {
+            direction: "top",
+            offset: [0, -12],
+            opacity: 0.95,
+            className: "neon-tooltip",
+            sticky: true,
+          })
+          return marker
+        },
         onEachFeature: (feature: any, layerInner: any) => {
-          if (feature?.properties) {
-            const popupContent = feature.properties.popup || feature.properties.name || null
-            if (popupContent) layerInner.bindPopup(String(popupContent))
+          const color = getFeatureColor(feature)
+          if (layerInner.setStyle) {
+            layerInner.setStyle({
+              color,
+              weight: feature?.properties?._kind === "buffer" ? 2 : 1.5,
+              fillOpacity: feature?.properties?._kind === "buffer" ? 0.1 : 0.2,
+              dashArray: feature?.properties?._kind === "buffer" ? "6 6" : undefined,
+            })
+          }
+          if (feature?.geometry?.type !== "Point") {
+            layerInner.bindTooltip(createTooltipContent(feature), {
+              direction: "center",
+              offset: [0, 0],
+              opacity: 0.95,
+              className: "neon-tooltip",
+              sticky: true,
+            })
           }
         },
       }).addTo(map)

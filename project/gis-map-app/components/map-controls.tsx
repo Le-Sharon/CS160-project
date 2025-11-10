@@ -1,8 +1,7 @@
 "use client"
-// TODO: Reimplement CSV import/export API (importCSVFile, exportLayerUrl, getLayerGeoJSON).
-// implement API under `lib/api.ts` and server routes for storage/conversion.
-import { useState } from "react"
-import { Upload, Download, MapPin } from "lucide-react"
+
+import { useRef, useState, type ChangeEvent } from "react"
+import { Upload, Download, MapPin, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Search } from "lucide-react"
@@ -10,8 +9,11 @@ import { Search } from "lucide-react"
 interface MapControlsProps {
   onFlyTo: (lng: number, lat: number, zoom?: number) => void
   mapLoaded: boolean
-  onPlotGeoJson?: () => void
-  onClearGeoJson?: () => void
+  onImportCSV?: (file: File) => void | Promise<void>
+  onExportLayer?: () => void
+  onClearLayers?: () => void
+  isImporting?: boolean
+  activeLayerCount?: number
 }
 
 const quickLocations = [
@@ -21,25 +23,50 @@ const quickLocations = [
   { name: "Houston", lng: -95.3698, lat: 29.7604 },
 ]
 
-export function MapControls({ onFlyTo, mapLoaded, onPlotGeoJson, onClearGeoJson }: MapControlsProps) {
+export function MapControls({
+  onFlyTo,
+  mapLoaded,
+  onImportCSV,
+  onExportLayer,
+  onClearLayers,
+  isImporting = false,
+  activeLayerCount = 0,
+}: MapControlsProps) {
   const [showLocations, setShowLocations] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files || !files.length || !onImportCSV) return
+    const file = files[0]
+    await onImportCSV(file)
+    event.target.value = ""
+  }
 
   return (
-  <div className="absolute bottom-6 left-6 z-[9999] pointer-events-auto flex flex-col gap-2">
-      {/* Quick Actions */}
-      <div className="flex gap-2">
+    <div className="absolute bottom-6 left-6 z-[9999] pointer-events-auto flex flex-col gap-2">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
-          disabled={!mapLoaded}
+          disabled={!mapLoaded || !onImportCSV || isImporting}
+          onClick={() => fileInputRef.current?.click()}
           className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
         >
           <Upload className="w-4 h-4" />
-          <span className="text-sm">Import CSV</span>
+          <span className="text-sm">{isImporting ? "Importing..." : "Import CSV"}</span>
         </Button>
 
         <Button
           size="sm"
-          disabled={!mapLoaded}
+          disabled={!mapLoaded || !onExportLayer}
+          onClick={() => onExportLayer?.()}
           className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
         >
           <Download className="w-4 h-4" />
@@ -49,7 +76,7 @@ export function MapControls({ onFlyTo, mapLoaded, onPlotGeoJson, onClearGeoJson 
         <Button
           size="sm"
           disabled={!mapLoaded}
-          onClick={() => setShowLocations(!showLocations)}
+          onClick={() => setShowLocations((prev) => !prev)}
           className={cn(
             "h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50",
             showLocations && "bg-[oklch(0.6_0.2_250)]/10 border-[oklch(0.6_0.2_250)]",
@@ -59,27 +86,17 @@ export function MapControls({ onFlyTo, mapLoaded, onPlotGeoJson, onClearGeoJson 
           <span className="text-sm">Quick Nav</span>
         </Button>
 
-        {/* GeoJSON controls */}
         <Button
           size="sm"
-          disabled={!mapLoaded}
-          onClick={() => onPlotGeoJson && onPlotGeoJson()}
+          disabled={!mapLoaded || !activeLayerCount || !onClearLayers}
+          onClick={() => onClearLayers?.()}
           className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
         >
-          <span className="text-sm">Plot GeoJSON</span>
-        </Button>
-
-        <Button
-          size="sm"
-          disabled={!mapLoaded}
-          onClick={() => onClearGeoJson && onClearGeoJson()}
-          className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
-        >
-          <span className="text-sm">Clear GeoJSON</span>
+          <Trash2 className="w-4 h-4" />
+          <span className="text-sm">Clear Layers</span>
         </Button>
       </div>
 
-      {/* Quick Locations */}
       {showLocations && mapLoaded && (
         <div className="rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 backdrop-blur-sm p-2 space-y-1">
           {quickLocations.map((location) => (

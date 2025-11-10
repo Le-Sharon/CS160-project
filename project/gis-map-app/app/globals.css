@@ -173,3 +173,43 @@
 
 /* App UI overlays should receive pointer events above the map */
 .app-overlay-ui { z-index: 9999; pointer-events: auto; }
+
+.neon-marker {
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.45));
+}
+
+.neon-tooltip {
+  background: rgba(15, 18, 30, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  box-shadow:
+    0 0 12px rgba(76, 201, 240, 0.35),
+    0 0 24px rgba(255, 0, 110, 0.25);
+  color: #f8f8ff !important;
+  border-radius: 0.5rem !important;
+  padding: 0.75rem 0.85rem !important;
+}
+
+.neon-tooltip__body {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.neon-tooltip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.neon-tooltip__key {
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.neon-tooltip__value {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.95);
+}
