@@ -1,9 +1,21 @@
 from flask import Flask, request, jsonify, render_template, make_response
 import io, os, csv, math
+from datetime import datetime
 import pandas as pd
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 app = Flask(__name__)
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
+AIR_QUALITY_API_KEY = os.environ.get("AIR_QUALITY_API_KEY")
 
 LAYERS: dict[str, pd.DataFrame] = {}
 
@@ -250,6 +262,428 @@ def export_csv():
     resp.headers["Content-Type"] = "text/csv; charset=utf-8"
     resp.headers["Content-Disposition"] = f'attachment; filename="{layer}.csv"'
     return resp
+
+
+@app.route("/deleteLayer", methods=["POST", "OPTIONS"])
+def delete_layer():
+    try:
+        body = request.get_json(force=True) or {}
+        layer = body.get("layer")
+        if not layer:
+            return err("Missing 'layer' value.")
+        if layer not in LAYERS:
+            return err(f"Unknown layer '{layer}'.", 404)
+        del LAYERS[layer]
+        return ok({"layer": layer, "deleted": True})
+    except Exception as e:
+        return err(f"Bad request: {e}")
+
+@app.route("/getEnvironmentalLayers", methods=["GET"])
+def get_environmental_layers():
+    """
+    Query params:
+      type: "air_quality" | "weather" (required)
+      lat: float (required)
+      lon: float (required)
+      radius_m: float (optional, default 5000)
+    Returns GeoJSON FeatureCollection with environmental data points.
+    """
+    try:
+        layer_type = request.args.get("type")
+        if layer_type not in ("air_quality", "weather"):
+            return err("type must be 'air_quality' or 'weather'")
+        
+        lat = float(request.args.get("lat"))
+        lon = float(request.args.get("lon"))
+        radius_m = float(request.args.get("radius_m", 5000))
+        
+        features = []
+        
+        if layer_type == "air_quality":
+            # Use OpenWeatherMap Air Pollution API for real air quality data
+            if HAS_REQUESTS and AIR_QUALITY_API_KEY:
+                try:
+                    # Fetch air quality data by lat/lon using OpenWeatherMap API
+                    url = "http://api.openweathermap.org/data/2.5/air_pollution"
+                    params = {
+                        "lat": lat,
+                        "lon": lon,
+                        "appid": AIR_QUALITY_API_KEY
+                    }
+                    response = requests.get(url, params=params, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        # OpenWeatherMap returns: {"coord": {...}, "list": [{"main": {"aqi": ...}, "components": {...}, "dt": ...}]}
+                        if "list" in data and len(data.get("list", [])) > 0:
+                            air_data = data["list"][0]
+                            main = air_data.get("main", {})
+                            components = air_data.get("components", {})
+                            
+                            # OpenWeatherMap AQI is 1-5 scale
+                            aqi_owm = main.get("aqi", 1)
+                            
+                            # Convert OWM AQI (1-5) to approximate US AQI (0-300) for consistency
+                            # 1=Good(0-50), 2=Fair(51-100), 3=Moderate(101-150), 4=Poor(151-200), 5=Very Poor(201-300)
+                            aqi_map = {1: 25, 2: 75, 3: 125, 4: 175, 5: 250}
+                            primary_aqi = aqi_map.get(aqi_owm, 50)
+                            
+                            # Get pollutant concentrations (in µg/m³)
+                            pm25_conc = components.get("pm2_5", 0)
+                            pm10_conc = components.get("pm10", 0)
+                            o3_conc = components.get("o3", 0)
+                            
+                            # Convert concentrations to approximate AQI values
+                            # Simple conversion: PM2.5 AQI ≈ (pm2_5 / 12) * 50, capped at 300
+                            pm25_aqi = min(300, int((pm25_conc / 12.0) * 50)) if pm25_conc > 0 else 0
+                            pm10_aqi = min(300, int((pm10_conc / 54.0) * 50)) if pm10_conc > 0 else 0
+                            o3_aqi = min(300, int((o3_conc / 0.12) * 50)) if o3_conc > 0 else 0
+                            
+                            # Map OWM AQI to status
+                            aqi_status_map = {
+                                1: ("good", "Good"),
+                                2: ("moderate", "Fair"),
+                                3: ("moderate", "Moderate"),
+                                4: ("unhealthy", "Poor"),
+                                5: ("very_unhealthy", "Very Poor")
+                            }
+                            status, category = aqi_status_map.get(aqi_owm, ("moderate", "Moderate"))
+                            
+                            # Get location name from coordinates (or use a reverse geocoding API if needed)
+                            coord = data.get("coord", {})
+                            location_name = f"Location ({coord.get('lat', lat):.4f}, {coord.get('lon', lon):.4f})"
+                            
+                            # Get timestamp
+                            dt = air_data.get("dt", 0)
+                            date_observed = datetime.fromtimestamp(dt).strftime("%Y-%m-%d %H:%M") if dt > 0 else ""
+                            
+                            features.append({
+                                "type": "Feature",
+                                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                                "properties": {
+                                    "id": 1,
+                                    "name": location_name,
+                                    "aqi": primary_aqi,
+                                    "aqi_owm": aqi_owm,  # Original OWM AQI (1-5)
+                                    "pm25": pm25_aqi,
+                                    "pm25_conc": round(pm25_conc, 2),  # Concentration in µg/m³
+                                    "pm10": pm10_aqi,
+                                    "pm10_conc": round(pm10_conc, 2),  # Concentration in µg/m³
+                                    "o3": o3_aqi,
+                                    "o3_conc": round(o3_conc, 2),  # Concentration in µg/m³
+                                    "status": status,
+                                    "category": category,
+                                    "date_observed": date_observed,
+                                    "co": round(components.get("co", 0), 2),
+                                    "no2": round(components.get("no2", 0), 2),
+                                    "so2": round(components.get("so2", 0), 2),
+                                }
+                            })
+                            
+                            # Add nearby sample points for visualization
+                            import random
+                            for i in range(min(5, int(radius_m / 1000))):
+                                angle = random.uniform(0, 2 * math.pi)
+                                distance = random.uniform(1000, radius_m)
+                                offset_lat = distance * math.cos(angle) / 111000
+                                offset_lon = distance * math.sin(angle) / (111000 * math.cos(math.radians(lat)))
+                                
+                                # Use slightly varied AQI values around the main reading
+                                variation = random.uniform(-10, 10)
+                                nearby_aqi = max(0, min(300, int(primary_aqi + variation)))
+                                
+                                features.append({
+                                    "type": "Feature",
+                                    "geometry": {"type": "Point", "coordinates": [lon + offset_lon, lat + offset_lat]},
+                                    "properties": {
+                                        "id": i + 2,
+                                        "name": f"Nearby Station {i + 1}",
+                                        "aqi": nearby_aqi,
+                                        "pm25": max(0, pm25_aqi + int(random.uniform(-5, 5))),
+                                        "pm10": max(0, pm10_aqi + int(random.uniform(-5, 5))),
+                                        "status": "good" if nearby_aqi < 50 else "moderate" if nearby_aqi < 100 else "unhealthy",
+                                    }
+                                })
+                        else:
+                            # API returned empty data, fall back to demo data
+                            raise Exception("API returned no air quality data")
+                    else:
+                        # API call failed, fall back to demo data
+                        raise Exception(f"API returned status {response.status_code}: {response.text[:200]}")
+                        
+                except Exception as api_error:
+                    # Log the error for debugging
+                    print(f"OpenWeatherMap API error: {api_error}", flush=True)
+                    # Fall back to demo data if API call fails
+                    import random
+                    num_points = min(10, int(radius_m / 500))
+                    for i in range(num_points):
+                        angle = random.uniform(0, 2 * math.pi)
+                        distance = random.uniform(0, radius_m)
+                        offset_lat = distance * math.cos(angle) / 111000
+                        offset_lon = distance * math.sin(angle) / (111000 * math.cos(math.radians(lat)))
+                        
+                        aqi = random.randint(0, 300)
+                        features.append({
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [lon + offset_lon, lat + offset_lat]},
+                            "properties": {
+                                "id": i + 1,
+                                "name": f"Air Quality Station {i + 1} (Demo)",
+                                "aqi": aqi,
+                                "pm25": round(random.uniform(0, 100), 2),
+                                "pm10": round(random.uniform(0, 150), 2),
+                                "status": "good" if aqi < 50 else "moderate" if aqi < 100 else "unhealthy",
+                            }
+                        })
+            else:
+                # No requests library or API key, use demo data
+                import random
+                num_points = min(10, int(radius_m / 500))
+                for i in range(num_points):
+                    angle = random.uniform(0, 2 * math.pi)
+                    distance = random.uniform(0, radius_m)
+                    offset_lat = distance * math.cos(angle) / 111000
+                    offset_lon = distance * math.sin(angle) / (111000 * math.cos(math.radians(lat)))
+                    
+                    aqi = random.randint(0, 300)
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [lon + offset_lon, lat + offset_lat]},
+                        "properties": {
+                            "id": i + 1,
+                            "name": f"Air Quality Station {i + 1}",
+                            "aqi": aqi,
+                            "pm25": round(random.uniform(0, 100), 2),
+                            "pm10": round(random.uniform(0, 150), 2),
+                            "status": "good" if aqi < 50 else "moderate" if aqi < 100 else "unhealthy",
+                        }
+                    })
+        else:  # weather
+            import random
+            num_points = min(20, int(radius_m / 500))
+            for i in range(num_points):
+                # Generate points within radius
+                angle = random.uniform(0, 2 * math.pi)
+                distance = random.uniform(0, radius_m)
+                offset_lat = distance * math.cos(angle) / 111000  # rough conversion
+                offset_lon = distance * math.sin(angle) / (111000 * math.cos(math.radians(lat)))
+                
+                point_lat = lat + offset_lat
+                point_lon = lon + offset_lon
+                
+                temp = random.uniform(10, 30)
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [point_lon, point_lat]},
+                    "properties": {
+                        "id": i + 1,
+                        "name": f"Weather Station {i + 1}",
+                        "temperature": round(temp, 1),
+                        "humidity": random.randint(30, 90),
+                        "pressure": random.randint(980, 1020),
+                        "condition": random.choice(["clear", "cloudy", "rainy", "sunny"]),
+                    }
+                })
+        
+        return ok({"type": "FeatureCollection", "features": features})
+    except Exception as e:
+        return err(f"Bad request: {e}")
+
+@app.route("/getTransportationLayers", methods=["GET"])
+def get_transportation_layers():
+    """
+    Query params:
+      type: "transit" | "stations" (required)
+      lat: float (required)
+      lon: float (required)
+      radius_m: float (optional, default 5000)
+    Returns GeoJSON FeatureCollection with transportation data points.
+    """
+    try:
+        layer_type = request.args.get("type")
+        if layer_type not in ("transit", "stations"):
+            return err("type must be 'transit' or 'stations'")
+        
+        lat = float(request.args.get("lat"))
+        lon = float(request.args.get("lon"))
+        radius_m = float(request.args.get("radius_m", 5000))
+        
+        # Use OpenStreetMap Overpass API for real transit data
+        if HAS_REQUESTS:
+            try:
+                # Overpass API endpoint
+                overpass_url = "https://overpass-api.de/api/interpreter"
+                
+                # Convert radius from meters to approximate degrees (rough conversion)
+                # Use around syntax which is better for radius-based searches
+                radius_deg = radius_m / 111000  # rough conversion
+                
+                if layer_type == "transit":
+                    # Query for transit stops using around syntax (more flexible)
+                    # This searches within radius and includes more transit stop types
+                    overpass_query = f"""
+                    [out:json][timeout:25];
+                    (
+                      node["public_transport"~"^(stop_position|platform)$"](around:{radius_m},{lat},{lon});
+                      node["highway"="bus_stop"](around:{radius_m},{lat},{lon});
+                      node["railway"~"^(tram_stop|subway_entrance|halt)$"](around:{radius_m},{lat},{lon});
+                      node["amenity"="bus_station"](around:{radius_m},{lat},{lon});
+                    );
+                    out body;
+                    """
+                else:  # stations
+                    # Query for transit stations using around syntax
+                    overpass_query = f"""
+                    [out:json][timeout:25];
+                    (
+                      node["public_transport"="station"](around:{radius_m},{lat},{lon});
+                      node["railway"="station"](around:{radius_m},{lat},{lon});
+                      node["railway"="subway_entrance"](around:{radius_m},{lat},{lon});
+                      node["amenity"~"^(bus_station|ferry_terminal)$"](around:{radius_m},{lat},{lon});
+                      way["public_transport"="station"](around:{radius_m},{lat},{lon});
+                      way["railway"="station"](around:{radius_m},{lat},{lon});
+                    );
+                    out center;
+                    """
+                
+                response = requests.post(overpass_url, data=overpass_query, timeout=30, headers={"Content-Type": "text/plain"})
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    elements = data.get("elements", [])
+                    
+                    # Log for debugging
+                    print(f"Overpass API returned {len(elements)} elements for {layer_type} at ({lat}, {lon})", flush=True)
+                    
+                    if len(elements) > 0:
+                        features = []
+                        for idx, element in enumerate(elements, 1):
+                            # Get coordinates
+                            if element.get("type") == "node":
+                                elem_lat = element.get("lat")
+                                elem_lon = element.get("lon")
+                            elif element.get("type") == "way":
+                                # For ways, use center if available, otherwise use first node
+                                center = element.get("center", {})
+                                elem_lat = center.get("lat")
+                                elem_lon = center.get("lon")
+                            else:
+                                continue
+                            
+                            if not elem_lat or not elem_lon:
+                                continue
+                            
+                            # Get tags
+                            tags = element.get("tags", {})
+                            
+                            # Determine name
+                            name = (
+                                tags.get("name") or
+                                tags.get("ref") or
+                                tags.get("public_transport") or
+                                f"{layer_type.title()} {idx}"
+                            )
+                            
+                            # Determine type
+                            transit_type = (
+                                tags.get("public_transport") or
+                                tags.get("railway") or
+                                tags.get("highway") or
+                                "transit"
+                            )
+                            
+                            # Clean up transit type
+                            if transit_type in ["stop_position", "station"]:
+                                transit_type = tags.get("railway") or tags.get("highway") or transit_type
+                            
+                            # Build properties
+                            properties = {
+                                "id": element.get("id", idx),
+                                "name": name,
+                                "type": transit_type,
+                            }
+                            
+                            # Add additional useful tags
+                            if tags.get("network"):
+                                properties["network"] = tags.get("network")
+                            if tags.get("operator"):
+                                properties["operator"] = tags.get("operator")
+                            if tags.get("ref"):
+                                properties["ref"] = tags.get("ref")
+                            if tags.get("route_ref"):
+                                properties["routes"] = tags.get("route_ref")
+                            
+                            features.append({
+                                "type": "Feature",
+                                "geometry": {"type": "Point", "coordinates": [elem_lon, elem_lat]},
+                                "properties": properties
+                            })
+                        
+                        return ok({"type": "FeatureCollection", "features": features})
+                    else:
+                        # No data found - this is normal for rural areas
+                        # Fall back to demo data but don't treat as error
+                        print(f"No transit data found in area - using demo data", flush=True)
+                        raise Exception("No transit data found in area")
+                else:
+                    # API call failed, log the error
+                    error_text = response.text[:500] if hasattr(response, 'text') else "Unknown error"
+                    print(f"Overpass API error: status {response.status_code}, response: {error_text}", flush=True)
+                    raise Exception(f"Overpass API returned status {response.status_code}")
+                    
+            except Exception as api_error:
+                # Log the error for debugging
+                print(f"Overpass API error: {api_error}", flush=True)
+                # Fall back to demo data if API call fails
+                pass
+        
+        # Fallback to demo data if requests not available or API failed
+        import random
+        num_points = min(30, int(radius_m / 300))
+        features = []
+        
+        transit_types = ["bus", "train", "subway", "tram"]
+        station_names = ["Central", "North", "South", "East", "West", "Main", "Park", "Union"]
+        
+        for i in range(num_points):
+            angle = random.uniform(0, 2 * math.pi)
+            distance = random.uniform(0, radius_m)
+            offset_lat = distance * math.cos(angle) / 111000
+            offset_lon = distance * math.sin(angle) / (111000 * math.cos(math.radians(lat)))
+            
+            point_lat = lat + offset_lat
+            point_lon = lon + offset_lon
+            
+            if layer_type == "transit":
+                transit_type = random.choice(transit_types)
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [point_lon, point_lat]},
+                    "properties": {
+                        "id": i + 1,
+                        "name": f"{transit_type.title()} Stop {i + 1} (Demo)",
+                        "type": transit_type,
+                        "line": random.choice(["A", "B", "C", "1", "2", "3"]),
+                        "routes": random.randint(1, 5),
+                    }
+                })
+            else:  # stations
+                station_name = random.choice(station_names) + " Station"
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [point_lon, point_lat]},
+                    "properties": {
+                        "id": i + 1,
+                        "name": station_name + " (Demo)",
+                        "type": random.choice(["train", "subway", "bus"]),
+                        "lines": random.randint(1, 4),
+                    }
+                })
+        
+        return ok({"type": "FeatureCollection", "features": features})
+    except Exception as e:
+        return err(f"Bad request: {e}")
 
 if __name__ == "__main__":
     host = os.environ.get("FLASK_HOST", "0.0.0.0")

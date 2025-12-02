@@ -55,6 +55,25 @@ export interface GeoJsonFeatureCollection {
   features: any[]
 }
 
+export interface DeleteLayerResponse {
+  layer: string
+  deleted: boolean
+}
+
+export interface CompareLayersRequest {
+  layerA: string
+  layerB: string
+  distance_m?: number
+}
+
+export interface CompareLayersResponse {
+  pairs: Array<{
+    idA: number
+    idB: number
+    distance_m: number
+  }>
+}
+
 export async function listLayers(signal?: AbortSignal): Promise<LayerSummary[]> {
   const response = await fetch(`${API_BASE_URL}/layers`, {
     method: "GET",
@@ -135,6 +154,84 @@ export async function getBufferGeoJSON(
       radius_m,
       limit,
     }),
+  })
+
+  return handleResponse<GeoJsonFeatureCollection>(response)
+}
+
+export async function deleteLayer(layerId: string): Promise<DeleteLayerResponse> {
+  const response = await fetch(`${API_BASE_URL}/deleteLayer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ layer: layerId }),
+  })
+
+  return handleResponse<DeleteLayerResponse>(response)
+}
+
+export async function compareLayers(
+  layerA: string,
+  layerB: string,
+  distance_m = 200,
+): Promise<CompareLayersResponse> {
+  const response = await fetch(`${API_BASE_URL}/compareLayers`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      layerA,
+      layerB,
+      distance_m,
+    }),
+  })
+
+  return handleResponse<CompareLayersResponse>(response)
+}
+
+export async function getEnvironmentalLayers(
+  type: "air_quality" | "weather",
+  lat: number,
+  lon: number,
+  radius_m = 5000,
+): Promise<GeoJsonFeatureCollection> {
+  const params = new URLSearchParams()
+  params.set("type", type)
+  params.set("lat", String(lat))
+  params.set("lon", String(lon))
+  params.set("radius_m", String(radius_m))
+
+  const response = await fetch(`${API_BASE_URL}/getEnvironmentalLayers?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  })
+
+  return handleResponse<GeoJsonFeatureCollection>(response)
+}
+
+export async function getTransportationLayers(
+  type: "transit" | "stations",
+  lat: number,
+  lon: number,
+  radius_m = 5000,
+): Promise<GeoJsonFeatureCollection> {
+  const params = new URLSearchParams()
+  params.set("type", type)
+  params.set("lat", String(lat))
+  params.set("lon", String(lon))
+  params.set("radius_m", String(radius_m))
+
+  const response = await fetch(`${API_BASE_URL}/getTransportationLayers?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
   })
 
   return handleResponse<GeoJsonFeatureCollection>(response)

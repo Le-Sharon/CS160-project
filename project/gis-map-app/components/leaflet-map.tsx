@@ -11,11 +11,20 @@ declare global {
 interface LeafletMapProps {
   onMapReady: (map: any) => void
   onMove: (coords: { lng: number; lat: number; zoom: number }) => void
+  onMapClick?: (lat: number, lng: number) => void
+  bufferMode?: boolean
   geoJson?: any
   fitToBounds?: boolean
 }
 
-export default function LeafletMap({ onMapReady, onMove, geoJson, fitToBounds = true }: LeafletMapProps) {
+export default function LeafletMap({
+  onMapReady,
+  onMove,
+  onMapClick,
+  bufferMode = false,
+  geoJson,
+  fitToBounds = true,
+}: LeafletMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
   const geoJsonLayerRef = useRef<any>(null)
@@ -55,6 +64,19 @@ export default function LeafletMap({ onMapReady, onMove, geoJson, fitToBounds = 
         })
       })
 
+      if (onMapClick) {
+        map.on("click", (e: any) => {
+          onMapClick(e.latlng.lat, e.latlng.lng)
+        })
+      }
+
+      // Update cursor style based on buffer mode
+      if (bufferMode) {
+        map.getContainer().style.cursor = "crosshair"
+      } else {
+        map.getContainer().style.cursor = ""
+      }
+
       mapInstanceRef.current = map
       onMapReady(map)
     }
@@ -67,7 +89,7 @@ export default function LeafletMap({ onMapReady, onMove, geoJson, fitToBounds = 
         mapInstanceRef.current = null
       }
     }
-  }, [onMapReady, onMove])
+  }, [onMapReady, onMove, onMapClick, bufferMode])
 
   // Watch for geoJson prop changes and add/remove layer accordingly
   useEffect(() => {
@@ -136,9 +158,10 @@ export default function LeafletMap({ onMapReady, onMove, geoJson, fitToBounds = 
           if (layerInner.setStyle) {
             layerInner.setStyle({
               color,
-              weight: feature?.properties?._kind === "buffer" ? 2 : 1.5,
-              fillOpacity: feature?.properties?._kind === "buffer" ? 0.1 : 0.2,
-              dashArray: feature?.properties?._kind === "buffer" ? "6 6" : undefined,
+              weight: feature?.properties?._kind === "buffer" ? 4 : 1.5,
+              fillOpacity: feature?.properties?._kind === "buffer" ? 0.25 : 0.2,
+              dashArray: feature?.properties?._kind === "buffer" ? "10 5" : undefined,
+              opacity: feature?.properties?._kind === "buffer" ? 0.9 : 1,
             })
           }
           if (feature?.geometry?.type !== "Point") {
