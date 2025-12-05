@@ -254,14 +254,40 @@ def compare_layers():
 @app.route("/exportCSV", methods=["GET"])
 def export_csv():
     layer = request.args.get("layer")
-    if not layer: return err("Missing ?layer=name")
-    if layer not in LAYERS: return err(f"Unknown layer '{layer}'.", 404)
-    buf = io.StringIO()
-    LAYERS[layer].to_csv(buf, index=False)
-    resp = make_response(buf.getvalue())
-    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
-    resp.headers["Content-Disposition"] = f'attachment; filename="{layer}.csv"'
-    return resp
+    layers = request.args.getlist("layers")  # Support multiple layers
+    
+    # If single layer specified (backward compatibility)
+    if layer and not layers:
+        if layer not in LAYERS: return err(f"Unknown layer '{layer}'.", 404)
+        buf = io.StringIO()
+        LAYERS[layer].to_csv(buf, index=False)
+        resp = make_response(buf.getvalue())
+        resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+        resp.headers["Content-Disposition"] = f'attachment; filename="{layer}.csv"'
+        return resp
+    
+    # If multiple layers specified, merge them
+    if layers:
+        dfs = []
+        for l in layers:
+            if l not in LAYERS:
+                return err(f"Unknown layer '{l}'.", 404)
+            df = LAYERS[l].copy()
+            # Add a column to identify which layer each row came from
+            df.insert(0, "_source_layer", l)
+            dfs.append(df)
+        
+        # Merge all dataframes
+        merged = pd.concat(dfs, ignore_index=True)
+        buf = io.StringIO()
+        merged.to_csv(buf, index=False)
+        resp = make_response(buf.getvalue())
+        resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+        filename = f"merged_layers_{len(layers)}_layers.csv"
+        resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
+    
+    return err("Missing ?layer=name or ?layers=name1&layers=name2")
 
 
 @app.route("/deleteLayer", methods=["POST", "OPTIONS"])

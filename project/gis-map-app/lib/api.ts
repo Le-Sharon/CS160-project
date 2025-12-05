@@ -134,6 +134,14 @@ export function exportLayerUrl(layerId: string): string {
   return `${API_BASE_URL}/exportCSV?${params.toString()}`
 }
 
+export function exportMergedLayersUrl(layerIds: string[]): string {
+  const params = new URLSearchParams()
+  layerIds.forEach((id) => {
+    params.append("layers", id)
+  })
+  return `${API_BASE_URL}/exportCSV?${params.toString()}`
+}
+
 export async function getBufferGeoJSON(
   layerId: string,
   lon: number,

@@ -6,8 +6,10 @@ import { MapControls } from "./map-controls"
 import { LayerPanel } from "./layer-panel"
 import { MapHeader } from "./map-header"
 import { BufferZonePanel } from "./buffer-zone-panel"
+import { ComparisonPanel } from "./comparison-panel"
 import {
   exportLayerUrl,
+  exportMergedLayersUrl,
   getLayerGeoJSON,
   getBufferGeoJSON,
   getEnvironmentalLayers,
@@ -32,16 +34,31 @@ const MapContainer = dynamic(() => import("./leaflet-map"), {
 
 type LayerStatus = "idle" | "loading" | "error"
 const NEON_COLORS = [
-  "#FB5607",
-  "#FF006E",
-  "#8338EC",
-  "#3A86FF",
-  "#00F5D4",
-  "#F15BB5",
-  "#FEE440",
-  "#4CC9F0",
-  "#8AFF80",
-  "#FFBE0B",
+  "#FB5607", // Orange Red
+  "#FF006E", // Hot Pink
+  "#8338EC", // Purple
+  "#3A86FF", // Blue
+  "#00F5D4", // Cyan
+  "#F15BB5", // Pink
+  "#FEE440", // Yellow
+  "#4CC9F0", // Sky Blue
+  "#8AFF80", // Green
+  "#FFBE0B", // Gold
+  "#FF6B35", // Orange
+  "#06FFA5", // Mint Green
+  "#A8E6CF", // Light Green
+  "#FFD93D", // Bright Yellow
+  "#6BCF7F", // Emerald
+  "#4ECDC4", // Turquoise
+  "#45B7D1", // Light Blue
+  "#96CEB4", // Sea Green
+  "#FFEAA7", // Pale Yellow
+  "#DDA0DD", // Plum
+  "#98D8C8", // Aqua
+  "#F7DC6F", // Light Yellow
+  "#BB8FCE", // Lavender
+  "#85C1E2", // Powder Blue
+  "#F8B739", // Amber
 ] as const
 
 export default function MapView() {
@@ -49,6 +66,7 @@ export default function MapView() {
   const [coordinates, setCoordinates] = useState({ lng: -98.5795, lat: 39.8283, zoom: 4 })
   const [activeLayers, setActiveLayers] = useState<string[]>([])
   const [mapInstance, setMapInstance] = useState<any>(null)
+  const mapInstanceRef = useRef<any>(null)
   const [layerSummaries, setLayerSummaries] = useState<LayerSummary[]>([])
   const [isLoadingLayers, setIsLoadingLayers] = useState(false)
   const [layerStatuses, setLayerStatuses] = useState<Record<string, LayerStatus>>({})
@@ -59,6 +77,16 @@ export default function MapView() {
   const [bufferRadius, setBufferRadius] = useState(500)
   const [isCreatingBuffer, setIsCreatingBuffer] = useState(false)
   const [isComparing, setIsComparing] = useState(false)
+  const [comparisonMode, setComparisonMode] = useState(false)
+  const [comparisonPairs, setComparisonPairs] = useState<Array<{
+    idA: number
+    idB: number
+    distance_m: number
+    pointA?: any
+    pointB?: any
+  }>>([])
+  const [comparisonLayerA, setComparisonLayerA] = useState<string>("")
+  const [comparisonLayerB, setComparisonLayerB] = useState<string>("")
   const [isLoadingEnvironmental, setIsLoadingEnvironmental] = useState(false)
   const [isLoadingTransportation, setIsLoadingTransportation] = useState(false)
   const [bufferZonePoints, setBufferZonePoints] = useState<any[]>([])
@@ -116,28 +144,31 @@ export default function MapView() {
     activeLayersRef.current = activeLayers
   }, [activeLayers])
 
+  // Shared hash function to ensure consistent color calculation
+  const hashId = useCallback((value: string) => {
+    let hash = 0
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash << 5) - hash + value.charCodeAt(i)
+      hash |= 0
+    }
+    return Math.abs(hash)
+  }, [])
+
   const layerColorMap = useMemo(() => {
     const colors: Record<string, string> = {}
-    const hashId = (value: string) => {
-      let hash = 0
-      for (let i = 0; i < value.length; i += 1) {
-        hash = (hash << 5) - hash + value.charCodeAt(i)
-        hash |= 0
-      }
-      return Math.abs(hash)
-    }
     layerSummaries.forEach((layer) => {
       const hash = hashId(layer.id)
       colors[layer.id] = NEON_COLORS[hash % NEON_COLORS.length]
     })
     return colors
-  }, [layerSummaries])
+  }, [layerSummaries, hashId])
 
   useEffect(() => {
     setGeoJsonLayers((prev) => {
       const updated: Record<string, GeoJsonFeatureCollection> = {}
       for (const [layerId, collection] of Object.entries(prev)) {
-        const color = layerColorMap[layerId] ?? NEON_COLORS[0]
+        // Use the same color calculation logic to ensure consistency
+        const color = layerColorMap[layerId] ?? NEON_COLORS[hashId(layerId) % NEON_COLORS.length]
         const features = (collection?.features ?? []).map((feature) => ({
           ...feature,
           properties: {
@@ -153,7 +184,7 @@ export default function MapView() {
       }
       return updated
     })
-  }, [layerColorMap])
+  }, [layerColorMap, hashId])
 
   const fetchLayerGeoJson = useCallback(
     async (layerId: string) => {
@@ -164,7 +195,9 @@ export default function MapView() {
           setLayerStatuses((prev) => ({ ...prev, [layerId]: "idle" }))
           return
         }
-        const color = layerColorMap[layerId] ?? NEON_COLORS[0]
+        // Get color - use layerColorMap if available, otherwise calculate it consistently using shared hash function
+        const color = layerColorMap[layerId] ?? NEON_COLORS[hashId(layerId) % NEON_COLORS.length]
+        
         const decorated: GeoJsonFeatureCollection = {
           ...data,
           features: (data?.features ?? []).map((feature) => ({
@@ -188,7 +221,7 @@ export default function MapView() {
         })
       }
     },
-    [layerColorMap, toast],
+    [layerColorMap, hashId, toast],
   )
 
   const handleLayerToggle = (layerId: string) => {
@@ -224,13 +257,16 @@ export default function MapView() {
     } satisfies GeoJsonFeatureCollection
   }, [geoJsonLayers])
 
-  const handleFlyTo = (lng: number, lat: number, zoom = 12) => {
-    if (mapInstance) {
-      mapInstance.flyTo([lat, lng], zoom, {
+  const handleFlyTo = useCallback((lng: number, lat: number, zoom = 12) => {
+    const map = mapInstanceRef.current || mapInstance
+    if (map) {
+      map.flyTo([lat, lng], zoom, {
         duration: 2,
       })
+    } else {
+      console.warn("Map instance not available for flyTo")
     }
-  }
+  }, [mapInstance])
 
   const handleImportCsv = async (file: File) => {
     setIsImporting(true)
@@ -261,29 +297,51 @@ export default function MapView() {
   }
 
   const handleExportActiveLayer = () => {
-    if (!activeLayers.length) {
+    // Get all CSV layers from layerSummaries (exclude environmental/transportation layers)
+    const csvLayers = layerSummaries
+      .filter((layer) => layer.id && typeof layer.id === "string")
+      .filter((layer) => !layer.id.startsWith("env_") && !layer.id.startsWith("trans_"))
+      .map((layer) => layer.id)
+
+    if (csvLayers.length === 0) {
       toast({
-        title: "No active layer",
-        description: "Select a layer before exporting.",
+        title: "No CSV layers to export",
+        description: "Import at least one CSV layer before exporting.",
         variant: "destructive",
       })
       return
     }
-    const url = exportLayerUrl(activeLayers[0])
+
+    // Export all CSV layers merged together
+    const url = exportMergedLayersUrl(csvLayers)
     window.open(url, "_blank", "noopener,noreferrer")
+    
+    toast({
+      title: "Export started",
+      description: `Exporting ${csvLayers.length} layer${csvLayers.length === 1 ? "" : "s"} merged into one CSV file.`,
+    })
   }
 
   const handleClearLayers = useCallback(async () => {
-    const layersToRemove = [...activeLayersRef.current]
-    const dynamicLayers = Object.keys(geoJsonLayers).filter(
-      (id) => id.startsWith("env_") || id.startsWith("trans_") || id.endsWith("_buffer")
+    // Get all CSV layer IDs from layerSummaries (exclude environmental/transportation layers)
+    const allCsvLayers = layerSummaries
+      .filter((layer) => layer.id && typeof layer.id === "string")
+      .filter((layer) => !layer.id.startsWith("env_") && !layer.id.startsWith("trans_"))
+      .map((layer) => layer.id)
+    
+    // CSV layers that are toggled OFF (in layerSummaries but NOT in activeLayers)
+    const toggledOffCsvLayers = allCsvLayers.filter((layerId) => !activeLayersRef.current.includes(layerId))
+    
+    // Environmental and Transportation layers that are toggled ON (in geoJsonLayers)
+    const toggledOnDynamicLayers = Object.keys(geoJsonLayers).filter(
+      (id) => id.startsWith("env_") || id.startsWith("trans_")
     )
     
-    // Check if there are any layers to clear (CSV or dynamic)
-    if (!layersToRemove.length && !dynamicLayers.length) {
+    // Check if there are any layers to clear
+    if (!toggledOffCsvLayers.length && !toggledOnDynamicLayers.length) {
       toast({
         title: "No layers to clear",
-        description: "There are no active layers on the map.",
+        description: "There are no toggled-off CSV layers or toggled-on Environmental/Transportation layers to clear.",
         variant: "destructive",
       })
       return
@@ -292,10 +350,10 @@ export default function MapView() {
     setIsClearing(true)
     const failures: string[] = []
 
-    // Delete CSV-imported layers from backend
-    if (layersToRemove.length > 0) {
+    // Delete toggled-off CSV layers from backend
+    if (toggledOffCsvLayers.length > 0) {
       await Promise.all(
-        layersToRemove.map(async (layerId) => {
+        toggledOffCsvLayers.map(async (layerId) => {
           try {
             await deleteLayer(layerId)
           } catch (error: any) {
@@ -306,15 +364,29 @@ export default function MapView() {
       )
     }
 
-    // Clear all layers (CSV and dynamic) from the map
-    updateActiveLayers(() => [])
-    setGeoJsonLayers({})
-    setLayerStatuses({})
-    setBufferZonePoints([])
-    setBufferZoneCenter(null)
+    // Remove toggled-on Environmental/Transportation layers from the map
+    if (toggledOnDynamicLayers.length > 0) {
+      setGeoJsonLayers((prev) => {
+        const next = { ...prev }
+        toggledOnDynamicLayers.forEach((layerId) => {
+          delete next[layerId]
+        })
+        return next
+      })
+      
+      // Also remove their statuses
+      setLayerStatuses((prev) => {
+        const next = { ...prev }
+        toggledOnDynamicLayers.forEach((layerId) => {
+          delete next[layerId]
+        })
+        return next
+      })
+    }
+
     await refreshLayers()
 
-    const totalCleared = layersToRemove.length + dynamicLayers.length
+    const totalCleared = toggledOffCsvLayers.length + toggledOnDynamicLayers.length
 
     if (failures.length) {
       toast({
@@ -325,22 +397,138 @@ export default function MapView() {
     } else {
       toast({
         title: "Layers cleared",
-        description: `Cleared ${totalCleared} layer${totalCleared === 1 ? "" : "s"} (${layersToRemove.length} CSV, ${dynamicLayers.length} dynamic).`,
+        description: `Cleared ${totalCleared} layer${totalCleared === 1 ? "" : "s"} (${toggledOffCsvLayers.length} toggled-off CSV, ${toggledOnDynamicLayers.length} toggled-on Environmental/Transportation).`,
       })
     }
 
     setIsClearing(false)
-  }, [refreshLayers, toast, updateActiveLayers, geoJsonLayers])
+  }, [refreshLayers, toast, layerSummaries, geoJsonLayers])
+
+  // Helper function to calculate haversine distance in meters
+  const haversineDistance = (lon1: number, lat1: number, lon2: number, lat2: number): number => {
+    const R = 6371000.0 // Earth radius in meters
+    const dLat = ((lat2 - lat1) * Math.PI) / 180
+    const dLon = ((lon2 - lon1) * Math.PI) / 180
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+  }
+
+  // Helper function to create a circle polygon
+  const createCirclePolygon = (lon: number, lat: number, radius_m: number, steps = 64): any => {
+    const R = 6371000.0
+    const lat0 = (lat * Math.PI) / 180
+    const lon0 = (lon * Math.PI) / 180
+    const angDist = radius_m / R
+    const coords: number[][] = []
+
+    for (let i = 0; i <= steps; i++) {
+      const brg = (2 * Math.PI * i) / steps
+      const latp = Math.asin(
+        Math.sin(lat0) * Math.cos(angDist) + Math.cos(lat0) * Math.sin(angDist) * Math.cos(brg),
+      )
+      const lonp =
+        lon0 +
+        Math.atan2(
+          Math.sin(brg) * Math.sin(angDist) * Math.cos(lat0),
+          Math.cos(angDist) - Math.sin(lat0) * Math.sin(latp),
+        )
+      coords.push([(lonp * 180) / Math.PI, (latp * 180) / Math.PI])
+    }
+
+    return {
+      type: "Polygon",
+      coordinates: [coords],
+    }
+  }
 
   const handleMapClick = useCallback(
     async (lat: number, lng: number) => {
-      if (!bufferMode || !activeLayers.length || isCreatingBuffer) return
+      if (!bufferMode || isCreatingBuffer) return
 
-      const selectedLayer = activeLayers[0]
+      // Find available layers (CSV layers from activeLayers, or frontend-only layers from geoJsonLayers)
+      const availableLayers: string[] = []
+      
+      // Add CSV layers from activeLayers
+      availableLayers.push(...activeLayers)
+      
+      // Add frontend-only layers (env_ and trans_) from geoJsonLayers
+      Object.keys(geoJsonLayers).forEach((layerId) => {
+        if ((layerId.startsWith("env_") || layerId.startsWith("trans_")) && !availableLayers.includes(layerId)) {
+          availableLayers.push(layerId)
+        }
+      })
+
+      if (!availableLayers.length) {
+        toast({
+          title: "No layer available",
+          description: "Please load or activate at least one layer to create a buffer zone.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const selectedLayer = availableLayers[0]
       setIsCreatingBuffer(true)
 
       try {
-        const bufferData = await getBufferGeoJSON(selectedLayer, lng, lat, bufferRadius)
+        let bufferData: GeoJsonFeatureCollection
+
+        // Check if it's a frontend-only layer (env_ or trans_)
+        if (selectedLayer.startsWith("env_") || selectedLayer.startsWith("trans_")) {
+          // Calculate buffer zone on frontend
+          const layerData = geoJsonLayers[selectedLayer]
+          if (!layerData || !layerData.features) {
+            throw new Error("Layer data not found")
+          }
+
+          const pointsWithinRadius: any[] = []
+          layerData.features.forEach((feature: any) => {
+            if (feature.geometry?.type === "Point" && feature.geometry.coordinates) {
+              const [featureLon, featureLat] = feature.geometry.coordinates
+              const distance = haversineDistance(lng, lat, featureLon, featureLat)
+              if (distance <= bufferRadius) {
+                pointsWithinRadius.push({
+                  ...feature,
+                  properties: {
+                    ...feature.properties,
+                    distance_m: distance,
+                  },
+                })
+              }
+            }
+          })
+
+          // Sort by distance
+          pointsWithinRadius.sort((a, b) => (a.properties.distance_m || 0) - (b.properties.distance_m || 0))
+
+          // Create buffer circle polygon
+          const circlePolygon = createCirclePolygon(lng, lat, bufferRadius)
+
+          bufferData = {
+            type: "FeatureCollection",
+            features: [
+              ...pointsWithinRadius,
+              {
+                type: "Feature",
+                geometry: circlePolygon,
+                properties: {
+                  _kind: "buffer",
+                  radius_m: bufferRadius,
+                },
+              },
+            ],
+          }
+        } else {
+          // Use backend API for CSV-imported layers
+          bufferData = await getBufferGeoJSON(selectedLayer, lng, lat, bufferRadius)
+        }
+
         const color = layerColorMap[selectedLayer] ?? NEON_COLORS[0]
         const decorated: GeoJsonFeatureCollection = {
           ...bufferData,
@@ -388,22 +576,203 @@ export default function MapView() {
         setIsCreatingBuffer(false)
       }
     },
-    [bufferMode, activeLayers, bufferRadius, layerColorMap, toast],
+    [bufferMode, activeLayers, bufferRadius, layerColorMap, toast, geoJsonLayers],
   )
 
   const handleCompareLayers = useCallback(async () => {
-    if (activeLayers.length < 2) {
+    // Get available layers (CSV from activeLayers, or frontend-only from geoJsonLayers)
+    const availableLayers: string[] = []
+    availableLayers.push(...activeLayers)
+    Object.keys(geoJsonLayers).forEach((layerId) => {
+      if ((layerId.startsWith("env_") || layerId.startsWith("trans_")) && !availableLayers.includes(layerId)) {
+        availableLayers.push(layerId)
+      }
+    })
+
+    if (availableLayers.length < 2) {
       toast({
         title: "Need two layers",
-        description: "Please activate at least two layers to compare.",
+        description: "Please activate or load at least two layers to compare.",
         variant: "destructive",
+      })
+      return
+    }
+
+    const layerA = availableLayers[0]
+    const layerB = availableLayers[1]
+
+    // Toggle comparison mode if already active
+    if (comparisonMode && comparisonLayerA === layerA && comparisonLayerB === layerB) {
+      setComparisonMode(false)
+      setComparisonPairs([])
+      setComparisonLayerA("")
+      setComparisonLayerB("")
+      // Remove comparison markers
+      setGeoJsonLayers((prev) => {
+        const next = { ...prev }
+        Object.keys(next).forEach((key) => {
+          if (key.startsWith("comparison_")) {
+            delete next[key]
+          }
+        })
+        return next
       })
       return
     }
 
     setIsComparing(true)
     try {
-      const result = await compareLayers(activeLayers[0], activeLayers[1], 200)
+      let result: { pairs: Array<{ idA: number; idB: number; distance_m: number }> }
+      
+      // Check if both layers are frontend-only or if we need backend comparison
+      const layerAIsFrontend = layerA.startsWith("env_") || layerA.startsWith("trans_")
+      const layerBIsFrontend = layerB.startsWith("env_") || layerB.startsWith("trans_")
+      
+      if (layerAIsFrontend || layerBIsFrontend) {
+        // Frontend comparison
+        const layerAData = geoJsonLayers[layerA]
+        const layerBData = geoJsonLayers[layerB]
+        
+        if (!layerAData || !layerBData) {
+          throw new Error("Layer data not found")
+        }
+
+        const pairs: Array<{ idA: number; idB: number; distance_m: number }> = []
+        
+        layerAData.features?.forEach((featureA: any, indexA: number) => {
+          if (featureA.geometry?.type === "Point" && featureA.geometry.coordinates) {
+            const [lonA, latA] = featureA.geometry.coordinates
+            const idA = featureA.properties?.id ?? indexA + 1
+            
+            layerBData.features?.forEach((featureB: any, indexB: number) => {
+              if (featureB.geometry?.type === "Point" && featureB.geometry.coordinates) {
+                const [lonB, latB] = featureB.geometry.coordinates
+                const idB = featureB.properties?.id ?? indexB + 1
+                const distance = haversineDistance(lonA, latA, lonB, latB)
+                
+                if (distance <= 200) {
+                  pairs.push({ idA: Number(idA), idB: Number(idB), distance_m: distance })
+                }
+              }
+            })
+          }
+        })
+        
+        result = { pairs }
+      } else {
+        // Backend comparison for CSV layers
+        result = await compareLayers(layerA, layerB, 200)
+      }
+      
+      // Fetch full point data for both layers
+      let layerAData = geoJsonLayers[layerA]
+      let layerBData = geoJsonLayers[layerB]
+      
+      if (!layerAData && !layerAIsFrontend) {
+        layerAData = await getLayerGeoJSON(layerA)
+      }
+      if (!layerBData && !layerBIsFrontend) {
+        layerBData = await getLayerGeoJSON(layerB)
+      }
+
+      if (!layerAData || !layerBData) {
+        throw new Error("Layer data not found")
+      }
+
+      // Create a map of id -> feature for quick lookup
+      const layerAMap = new Map<number, any>()
+      const layerBMap = new Map<number, any>()
+
+      layerAData.features?.forEach((feature: any) => {
+        const id = feature.properties?.id
+        if (id !== undefined) {
+          layerAMap.set(Number(id), feature)
+        }
+      })
+
+      layerBData.features?.forEach((feature: any) => {
+        const id = feature.properties?.id
+        if (id !== undefined) {
+          layerBMap.set(Number(id), feature)
+        }
+      })
+
+      // Enrich pairs with full point data
+      const enrichedPairs = result.pairs.map((pair) => ({
+        ...pair,
+        pointA: layerAMap.get(pair.idA),
+        pointB: layerBMap.get(pair.idB),
+      }))
+
+      // Create comparison markers (red dashed squares)
+      const comparisonFeatures: any[] = []
+      enrichedPairs.forEach((pair) => {
+        if (pair.pointA?.geometry?.type === "Point") {
+          const [lon, lat] = pair.pointA.geometry.coordinates
+          // Create a square around the point
+          const size = 0.0005 // Approximate size in degrees
+          const square = {
+            type: "Feature",
+            geometry: {
+              type: "Polygon",
+              coordinates: [[
+                [lon - size, lat - size],
+                [lon + size, lat - size],
+                [lon + size, lat + size],
+                [lon - size, lat + size],
+                [lon - size, lat - size],
+              ]],
+            },
+            properties: {
+              _kind: "comparison",
+              _pairIndex: enrichedPairs.indexOf(pair),
+              _layer: "A",
+              _id: pair.idA,
+            },
+          }
+          comparisonFeatures.push(square)
+        }
+        if (pair.pointB?.geometry?.type === "Point") {
+          const [lon, lat] = pair.pointB.geometry.coordinates
+          const size = 0.0005
+          const square = {
+            type: "Feature",
+            geometry: {
+              type: "Polygon",
+              coordinates: [[
+                [lon - size, lat - size],
+                [lon + size, lat - size],
+                [lon + size, lat + size],
+                [lon - size, lat + size],
+                [lon - size, lat - size],
+              ]],
+            },
+            properties: {
+              _kind: "comparison",
+              _pairIndex: enrichedPairs.indexOf(pair),
+              _layer: "B",
+              _id: pair.idB,
+            },
+          }
+          comparisonFeatures.push(square)
+        }
+      })
+
+      const comparisonGeoJson: GeoJsonFeatureCollection = {
+        type: "FeatureCollection",
+        features: comparisonFeatures,
+      }
+
+      setGeoJsonLayers((prev) => ({
+        ...prev,
+        [`comparison_${layerA}_${layerB}`]: comparisonGeoJson,
+      }))
+
+      setComparisonPairs(enrichedPairs)
+      setComparisonLayerA(layerA)
+      setComparisonLayerB(layerB)
+      setComparisonMode(true)
+
       toast({
         title: "Layer comparison complete",
         description: `Found ${result.pairs.length} point pairs within 200m of each other.`,
@@ -418,7 +787,7 @@ export default function MapView() {
     } finally {
       setIsComparing(false)
     }
-  }, [activeLayers, toast])
+  }, [activeLayers, toast, geoJsonLayers, comparisonMode, comparisonLayerA, comparisonLayerB, haversineDistance])
 
   const handleLoadEnvironmentalLayer = useCallback(
     async (type: "air_quality" | "weather") => {
@@ -523,6 +892,7 @@ export default function MapView() {
       <MapContainer
         onMapReady={useCallback((map: any) => {
           setMapInstance(map)
+          mapInstanceRef.current = map
           setMapLoaded(true)
         }, [])}
         onMove={useCallback((coords: { lng: number; lat: number; zoom: number }) => {
@@ -582,6 +952,7 @@ export default function MapView() {
         ).length}
         isClearing={isClearing}
         isComparing={isComparing}
+        comparisonMode={comparisonMode}
         isCreatingBuffer={isCreatingBuffer}
         isLoadingEnvironmental={isLoadingEnvironmental}
         isLoadingTransportation={isLoadingTransportation}
@@ -596,6 +967,38 @@ export default function MapView() {
           onClose={() => {
             setBufferZonePoints([])
             setBufferZoneCenter(null)
+            setGeoJsonLayers((prev) => {
+              const next = { ...prev }
+              Object.keys(next).forEach((key) => {
+                if (key.endsWith("_buffer")) {
+                  delete next[key]
+                }
+              })
+              return next
+            })
+          }}
+          onFlyTo={handleFlyTo}
+        />
+      )}
+      {comparisonMode && comparisonPairs.length > 0 && (
+        <ComparisonPanel
+          pairs={comparisonPairs}
+          layerAName={comparisonLayerA}
+          layerBName={comparisonLayerB}
+          onClose={() => {
+            setComparisonMode(false)
+            setComparisonPairs([])
+            setComparisonLayerA("")
+            setComparisonLayerB("")
+            setGeoJsonLayers((prev) => {
+              const next = { ...prev }
+              Object.keys(next).forEach((key) => {
+                if (key.startsWith("comparison_")) {
+                  delete next[key]
+                }
+              })
+              return next
+            })
           }}
           onFlyTo={handleFlyTo}
         />

@@ -29,6 +29,9 @@ export default function LeafletMap({
   const mapInstanceRef = useRef<any>(null)
   const geoJsonLayerRef = useRef<any>(null)
 
+  // Store click handler in ref so we can remove it later
+  const clickHandlerRef = useRef<((e: any) => void) | null>(null)
+
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return
 
@@ -64,19 +67,6 @@ export default function LeafletMap({
         })
       })
 
-      if (onMapClick) {
-        map.on("click", (e: any) => {
-          onMapClick(e.latlng.lat, e.latlng.lng)
-        })
-      }
-
-      // Update cursor style based on buffer mode
-      if (bufferMode) {
-        map.getContainer().style.cursor = "crosshair"
-      } else {
-        map.getContainer().style.cursor = ""
-      }
-
       mapInstanceRef.current = map
       onMapReady(map)
     }
@@ -89,7 +79,42 @@ export default function LeafletMap({
         mapInstanceRef.current = null
       }
     }
-  }, [onMapReady, onMove, onMapClick, bufferMode])
+  }, [onMapReady, onMove])
+
+  // Update click handler and cursor when onMapClick or bufferMode changes
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map) return
+
+    // Remove old click handler if it exists
+    if (clickHandlerRef.current) {
+      map.off("click", clickHandlerRef.current)
+      clickHandlerRef.current = null
+    }
+
+    // Add new click handler if onMapClick is provided
+    if (onMapClick) {
+      const handler = (e: any) => {
+        onMapClick(e.latlng.lat, e.latlng.lng)
+      }
+      map.on("click", handler)
+      clickHandlerRef.current = handler
+    }
+
+    // Update cursor style based on buffer mode
+    if (bufferMode) {
+      map.getContainer().style.cursor = "crosshair"
+    } else {
+      map.getContainer().style.cursor = ""
+    }
+
+    return () => {
+      if (map && clickHandlerRef.current) {
+        map.off("click", clickHandlerRef.current)
+        clickHandlerRef.current = null
+      }
+    }
+  }, [onMapClick, bufferMode])
 
   // Watch for geoJson prop changes and add/remove layer accordingly
   useEffect(() => {
@@ -155,14 +180,36 @@ export default function LeafletMap({
         },
         onEachFeature: (feature: any, layerInner: any) => {
           const color = getFeatureColor(feature)
+          const isBuffer = feature?.properties?._kind === "buffer"
+          const isComparison = feature?.properties?._kind === "comparison"
+          
           if (layerInner.setStyle) {
-            layerInner.setStyle({
-              color,
-              weight: feature?.properties?._kind === "buffer" ? 4 : 1.5,
-              fillOpacity: feature?.properties?._kind === "buffer" ? 0.25 : 0.2,
-              dashArray: feature?.properties?._kind === "buffer" ? "10 5" : undefined,
-              opacity: feature?.properties?._kind === "buffer" ? 0.9 : 1,
-            })
+            if (isComparison) {
+              // Red neon dashed square for comparison markers
+              layerInner.setStyle({
+                color: "#FF006E", // Hot Pink/Red neon
+                weight: 3,
+                fillColor: "#FF006E",
+                fillOpacity: 0.15,
+                dashArray: "8 4",
+                opacity: 0.95,
+              })
+            } else if (isBuffer) {
+              layerInner.setStyle({
+                color,
+                weight: 4,
+                fillOpacity: 0.25,
+                dashArray: "10 5",
+                opacity: 0.9,
+              })
+            } else {
+              layerInner.setStyle({
+                color,
+                weight: 1.5,
+                fillOpacity: 0.2,
+                opacity: 1,
+              })
+            }
           }
           if (feature?.geometry?.type !== "Point") {
             layerInner.bindTooltip(createTooltipContent(feature), {

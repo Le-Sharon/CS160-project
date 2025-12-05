@@ -25,6 +25,7 @@ interface MapControlsProps {
   activeLayerCount?: number
   isClearing?: boolean
   isComparing?: boolean
+  comparisonMode?: boolean
   isCreatingBuffer?: boolean
   isLoadingEnvironmental?: boolean
   isLoadingTransportation?: boolean
@@ -35,8 +36,12 @@ interface MapControlsProps {
 const quickLocations = [
   { name: "New York", lng: -74.006, lat: 40.7128 },
   { name: "Los Angeles", lng: -118.2437, lat: 34.0522 },
-  { name: "Chicago", lng: -87.6298, lat: 41.8781 },
-  { name: "Houston", lng: -95.3698, lat: 29.7604 },
+  { name: "San Francisco", lng: -122.4194, lat: 37.7749 },
+  { name: "Seattle", lng: -122.3321, lat: 47.6062 },
+  { name: "Miami", lng: -80.1918, lat: 25.7617 },
+  { name: "Boston", lng: -71.0571, lat: 42.3601 },
+  { name: "Washington, D.C.", lng: -77.0369, lat: 38.8939 },
+  { name: "Las Vegas", lng: -115.1398, lat: 36.1699 },
 ]
 
 export function MapControls({
@@ -56,6 +61,7 @@ export function MapControls({
   activeLayerCount = 0,
   isClearing = false,
   isComparing = false,
+  comparisonMode = false,
   isCreatingBuffer = false,
   isLoadingEnvironmental = false,
   isLoadingTransportation = false,
@@ -159,10 +165,15 @@ export function MapControls({
             if (!onCompareLayers) return
             await onCompareLayers()
           }}
-          className="h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50"
+          className={cn(
+            "h-10 gap-2 rounded-lg border border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)]/95 text-[oklch(0.85_0_0)] backdrop-blur-sm hover:bg-[oklch(0.18_0_0)] disabled:opacity-50",
+            comparisonMode && "bg-[oklch(0.6_0.2_250)]/10 border-[oklch(0.6_0.2_250)]",
+          )}
         >
           <GitCompare className="w-4 h-4" />
-          <span className="text-sm">{isComparing ? "Comparing..." : "Compare Layers"}</span>
+          <span className="text-sm">
+            {isComparing ? "Comparing..." : comparisonMode ? "Clear Comparison" : "Compare Layers"}
+          </span>
         </Button>
 
         <Button
